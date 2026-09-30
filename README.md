@@ -49,6 +49,14 @@ Start Django:
 
 The local server is available at <http://127.0.0.1:8000/>.
 
+## Configuration
+
+Copy `.env.example` to `.env` as a reference for required settings. Django
+does not load `.env` automatically, so export values in the shell or configure
+them through your process manager. `DATABASE_URL` is optional for local
+development; when it is omitted, the project uses SQLite. Docker Compose sets
+the PostgreSQL connection for the web container automatically.
+
 ## Docker and PostgreSQL
 
 Build the application image:
@@ -87,7 +95,21 @@ docker compose down -v
 
 ## Fixture ingestion
 
-Create the fixture source in the active database:
+Create the fixture source in the active database. For local development:
+
+```bash
+.venv/bin/python manage.py shell -c \
+  "from jobs.models import JobSource; JobSource.objects.get_or_create(
+  slug='fixture-source',
+  defaults={
+    'name': 'Fixture Source',
+    'base_url': 'https://fixture.example.com',
+    'source_type': 'fixture',
+  }
+  )"
+```
+
+For Docker:
 
 ```bash
 docker compose exec web python manage.py shell -c \
@@ -116,6 +138,31 @@ SUCCEEDED fixture-source: seen=2, created=2, updated=0, skipped=0
 
 Running the command again updates the existing jobs instead of creating
 duplicates.
+
+## Final verification
+
+Run the complete local verification sequence:
+
+```bash
+.venv/bin/python manage.py check
+.venv/bin/python manage.py migrate --check
+.venv/bin/python manage.py test
+docker compose config --quiet
+```
+
+For the PostgreSQL-backed workflow, also run:
+
+```bash
+docker compose build
+docker compose up -d
+docker compose exec web python manage.py migrate --check
+docker compose exec web python manage.py scrape_jobs \
+  --source fixture-source
+curl --fail http://127.0.0.1:8000/api/jobs/
+```
+
+The API response is paginated and should include a `count` and `results`
+field. Stop the stack after verification with `docker compose down`.
 
 ## API
 
