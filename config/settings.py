@@ -157,6 +157,17 @@ REST_FRAMEWORK = {
     'PAGE_SIZE': 20,
 }
 
+SCRAPER_USER_AGENT = os.environ.get(
+    'SCRAPER_USER_AGENT',
+    'PakistanJobRadar/0.1 (+project-contact)',
+)
+SCRAPER_TIMEOUT_SECONDS = int(
+    os.environ.get('SCRAPER_TIMEOUT_SECONDS', '15')
+)
+SCRAPER_MIN_DELAY_SECONDS = float(
+    os.environ.get('SCRAPER_MIN_DELAY_SECONDS', '2')
+)
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 

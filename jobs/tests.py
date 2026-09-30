@@ -2,6 +2,7 @@ from django.db import IntegrityError
 from django.test import TestCase
 
 from .models import Job, JobSource, ScrapeRun
+from .scrapers.fixture import FixtureAdapter
 
 
 class JobModelTests(TestCase):
@@ -44,3 +45,23 @@ class JobModelTests(TestCase):
         scrape_run = ScrapeRun.objects.create(source=self.source)
 
         self.assertEqual(scrape_run.status, ScrapeRun.Status.RUNNING)
+
+
+class FixtureAdapterTests(TestCase):
+    def test_fixture_adapter_normalizes_complete_listings(self):
+        jobs = list(FixtureAdapter().parse(FixtureAdapter().fetch()))
+
+        self.assertEqual(len(jobs), 2)
+        self.assertEqual(jobs[0].external_id, 'fixture-001')
+        self.assertEqual(jobs[0].title, 'Junior Python Developer')
+        self.assertEqual(jobs[0].company_name, 'Example Tech Pakistan')
+        self.assertEqual(jobs[0].workplace_type, 'hybrid')
+        self.assertEqual(
+            jobs[0].source_url,
+            'https://fixture.example.com/jobs/fixture-001',
+        )
+
+    def test_fixture_adapter_skips_incomplete_listings(self):
+        jobs = list(FixtureAdapter().parse(FixtureAdapter().fetch()))
+
+        self.assertNotIn('fixture-incomplete', [job.external_id for job in jobs])
