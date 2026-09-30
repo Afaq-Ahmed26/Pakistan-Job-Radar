@@ -1,4 +1,5 @@
 from django.db import IntegrityError
+from django.core.management import CommandError, call_command
 from django.test import TestCase
 from django.utils import timezone
 
@@ -144,3 +145,26 @@ class IngestionServiceTests(TestCase):
             build_job_fingerprint(self.source.slug, job),
             build_job_fingerprint(self.source.slug, job),
         )
+
+
+class ScrapeJobsCommandTests(TestCase):
+    def setUp(self):
+        self.source = JobSource.objects.create(
+            name='Fixture Source',
+            slug='fixture-source',
+            base_url='https://fixture.example.com',
+            source_type=JobSource.SourceType.FIXTURE,
+        )
+
+    def test_command_imports_selected_source(self):
+        call_command('scrape_jobs', source='fixture-source')
+
+        self.assertEqual(Job.objects.count(), 2)
+        self.assertEqual(ScrapeRun.objects.count(), 1)
+
+    def test_command_rejects_disabled_selected_source(self):
+        self.source.is_enabled = False
+        self.source.save(update_fields=['is_enabled'])
+
+        with self.assertRaisesMessage(CommandError, 'Enabled source not found: fixture-source'):
+            call_command('scrape_jobs', source='fixture-source')
