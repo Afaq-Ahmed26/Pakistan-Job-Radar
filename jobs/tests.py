@@ -2,7 +2,9 @@ from django.db import IntegrityError
 from django.core.management import CommandError, call_command
 from django.test import TestCase
 from django.utils import timezone
+from requests import Timeout
 from rest_framework.test import APIClient
+from unittest.mock import Mock, patch
 
 from .models import Job, JobSource, ScrapeRun
 from .services import build_job_fingerprint, run_adapter
@@ -70,6 +72,30 @@ class FixtureAdapterTests(TestCase):
         jobs = list(FixtureAdapter().parse(FixtureAdapter().fetch()))
 
         self.assertNotIn('fixture-incomplete', [job.external_id for job in jobs])
+
+    @patch('jobs.scrapers.base.requests.get')
+    def test_requests_use_timeout_and_user_agent(self, mock_get):
+        response = Mock()
+        response.text = '<html></html>'
+        mock_get.return_value = response
+        adapter = FixtureAdapter()
+
+        adapter.fetch_with_requests('https://example.com/jobs')
+
+        mock_get.assert_called_once_with(
+            'https://example.com/jobs',
+            headers={
+                'User-Agent': 'PakistanJobRadar/0.1 (+project-contact)',
+            },
+            timeout=15,
+        )
+
+    @patch('jobs.scrapers.base.requests.get', side_effect=Timeout('timed out'))
+    def test_request_timeout_is_not_silently_swallowed(self, mock_get):
+        with self.assertRaises(Timeout):
+            FixtureAdapter().fetch_with_requests('https://example.com/jobs')
+
+        mock_get.assert_called_once()
 
 
 class IngestionServiceTests(TestCase):
@@ -146,6 +172,21 @@ class IngestionServiceTests(TestCase):
             build_job_fingerprint(self.source.slug, job),
             build_job_fingerprint(self.source.slug, job),
         )
+
+    def test_fetch_failure_marks_run_failed(self):
+        class FailingAdapter:
+            def fetch(self):
+                raise Timeout('source timed out')
+
+            def parse(self, raw_content):
+                return []
+
+        scrape_run = run_adapter(self.source, FailingAdapter())
+
+        self.assertEqual(scrape_run.status, ScrapeRun.Status.FAILED)
+        self.assertIn('source timed out', scrape_run.error_message)
+        self.assertIsNotNone(scrape_run.finished_at)
+        self.assertEqual(Job.objects.count(), 0)
 
 
 class ScrapeJobsCommandTests(TestCase):
@@ -258,3 +299,20 @@ class JobApiTests(TestCase):
         response = self.client.get('/api/jobs/99999/')
 
         self.assertEqual(response.status_code, 404)
+
+    def test_invalid_choice_filter_returns_bad_request(self):
+        response = self.client.get('/api/jobs/?job_type=not-a-job-type')
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_description_is_returned_as_data_not_trusted_markup(self):
+        self.lahore_job.description = '<script>alert("x")</script>'
+        self.lahore_job.save(update_fields=['description'])
+
+        response = self.client.get(f'/api/jobs/{self.lahore_job.pk}/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data['description'],
+            '<script>alert("x")</script>',
+        )
