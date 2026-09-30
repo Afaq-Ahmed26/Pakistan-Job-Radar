@@ -2,6 +2,7 @@ from django.db import IntegrityError
 from django.core.management import CommandError, call_command
 from django.test import TestCase
 from django.utils import timezone
+from rest_framework.test import APIClient
 
 from .models import Job, JobSource, ScrapeRun
 from .services import build_job_fingerprint, run_adapter
@@ -168,3 +169,92 @@ class ScrapeJobsCommandTests(TestCase):
 
         with self.assertRaisesMessage(CommandError, 'Enabled source not found: fixture-source'):
             call_command('scrape_jobs', source='fixture-source')
+
+
+class JobApiTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.source = JobSource.objects.create(
+            name='Fixture Source',
+            slug='fixture-source',
+            base_url='https://fixture.example.com',
+        )
+        self.other_source = JobSource.objects.create(
+            name='Hidden Source',
+            slug='hidden-source',
+            base_url='https://hidden.example.com',
+            is_enabled=False,
+        )
+        self.lahore_job = Job.objects.create(
+            source=self.source,
+            title='Django Developer',
+            company_name='Example Tech',
+            location_text='Lahore',
+            description='Build Python APIs.',
+            job_type=Job.JobType.FULL_TIME,
+            workplace_type=Job.WorkplaceType.HYBRID,
+            source_url='https://fixture.example.com/jobs/1',
+            fingerprint='api-fingerprint-1',
+        )
+        Job.objects.create(
+            source=self.source,
+            title='QA Intern',
+            company_name='Testing Labs',
+            location_text='Karachi',
+            description='Learn software testing.',
+            job_type=Job.JobType.INTERNSHIP,
+            workplace_type=Job.WorkplaceType.ONSITE,
+            source_url='https://fixture.example.com/jobs/2',
+            fingerprint='api-fingerprint-2',
+        )
+        Job.objects.create(
+            source=self.other_source,
+            title='Inactive Source Job',
+            company_name='Hidden Co',
+            location_text='Lahore',
+            source_url='https://hidden.example.com/jobs/1',
+            fingerprint='api-fingerprint-3',
+        )
+
+    def test_job_list_is_paginated_and_active(self):
+        response = self.client.get('/api/jobs/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['count'], 2)
+        self.assertEqual(len(response.data['results']), 2)
+        self.assertEqual(response.data['results'][0]['source']['slug'], 'fixture-source')
+
+    def test_job_filters_and_search(self):
+        response = self.client.get(
+            '/api/jobs/',
+            {
+                'location': 'lahore',
+                'job_type': 'full_time',
+                'search': 'python',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['results'][0]['title'], 'Django Developer')
+
+    def test_job_detail_and_read_only_behavior(self):
+        response = self.client.get(f'/api/jobs/{self.lahore_job.pk}/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['salary']['currency'], '')
+
+        response = self.client.post('/api/jobs/', {})
+        self.assertEqual(response.status_code, 405)
+
+    def test_sources_only_include_enabled_sources(self):
+        response = self.client.get('/api/sources/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, [
+            {'slug': 'fixture-source', 'name': 'Fixture Source'},
+        ])
+
+    def test_missing_job_returns_not_found(self):
+        response = self.client.get('/api/jobs/99999/')
+
+        self.assertEqual(response.status_code, 404)
